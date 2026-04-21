@@ -5,9 +5,10 @@ import urllib.parse
 from pathlib import Path
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
-st.set_page_config(page_title="Vida OS Financeiro MVP v4", page_icon="💸", layout="wide")
+st.set_page_config(page_title="Vida OS Financeiro MVP v5", page_icon="💸", layout="wide")
 
 DEFAULT_CATEGORIES = [
     "Moradia",
@@ -27,7 +28,37 @@ DEFAULT_CATEGORIES = [
 ]
 
 BASE_DIR = Path(__file__).parent
-DEFAULT_RULES = pd.read_excel(BASE_DIR / "regras_padrao_v4.xlsx")
+DEFAULT_RULES = pd.read_excel(BASE_DIR / "regras_padrao_v5.xlsx")
+
+st.markdown("""
+<style>
+.block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
+.metric-card {
+    background: #ffffff;
+    border: 1px solid #ececec;
+    border-radius: 20px;
+    padding: 1rem 1.2rem;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.04);
+}
+.section-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: .3rem;
+}
+.section-subtitle {
+    color: #6b7280;
+    margin-bottom: 1rem;
+}
+.insight-box {
+    background: #f8fbff;
+    border: 1px solid #dbeafe;
+    border-radius: 18px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 0.8rem;
+}
+.small-muted {color: #6b7280; font-size: .92rem;}
+</style>
+""", unsafe_allow_html=True)
 
 def normalize_text(text: str) -> str:
     if pd.isna(text):
@@ -75,6 +106,7 @@ def merge_rules(system_rules: pd.DataFrame, user_rules: pd.DataFrame | None):
     if user_rules is None or user_rules.empty:
         return base.sort_values(["prioridade", "termo"]).reset_index(drop=True)
     cols = ["termo", "descricao_padrao", "categoria", "subcategoria", "prioridade", "ativo"]
+    user_rules = user_rules.copy()
     for col in cols:
         if col not in user_rules.columns:
             if col == "prioridade":
@@ -110,6 +142,7 @@ def prepare_transactions(df: pd.DataFrame, origem: str) -> pd.DataFrame:
     out["confianca"] = 0.0
     out["mes"] = out["data"].dt.month
     out["ano"] = out["data"].dt.year
+    out["dia"] = out["data"].dt.day
     out = out.dropna(subset=["descricao_original", "valor"]).reset_index(drop=True)
     return out
 
@@ -166,8 +199,55 @@ def to_excel_bytes(sheets: dict) -> bytes:
 def build_google_search(text):
     return "https://www.google.com/search?q=" + urllib.parse.quote_plus(str(text))
 
-st.title("💸 Vida OS Financeiro MVP v4")
-st.caption("Importe o extrato, deixe o sistema classificar o máximo possível e ajuste apenas o que ficar pendente.")
+def currency_br(v):
+    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def build_insights(df):
+    insights = []
+    suggestions = []
+    if df.empty:
+        return insights, suggestions
+
+    total = df["valor"].sum()
+    by_cat = df.groupby("categoria", dropna=False)["valor"].sum().sort_values(ascending=False)
+    top_cat = by_cat.index[0]
+    top_cat_val = by_cat.iloc[0]
+    top_cat_pct = (top_cat_val / total) * 100 if total else 0
+
+    insights.append(f"**{top_cat}** é a categoria com maior peso no período, somando **{currency_br(top_cat_val)}** ({top_cat_pct:.1f}% do total).")
+
+    if len(by_cat) >= 3:
+        top3 = by_cat.head(3).sum()
+        pct_top3 = (top3 / total) * 100 if total else 0
+        insights.append(f"As **3 maiores categorias** concentram **{pct_top3:.1f}%** dos gastos analisados.")
+
+    by_day = df.groupby("dia")["valor"].sum().sort_values(ascending=False)
+    if not by_day.empty:
+        day = int(by_day.index[0])
+        val = by_day.iloc[0]
+        insights.append(f"O dia **{day}** foi o de maior concentração de gastos, com **{currency_br(val)}**.")
+
+    ticket = df["valor"].mean()
+    insights.append(f"O **ticket médio por lançamento** foi de **{currency_br(ticket)}**.")
+
+    # Suggestions
+    if top_cat_pct >= 30:
+        suggestions.append(f"Revise a categoria **{top_cat}**: ela está muito concentrada e pode gerar rápido ganho de economia.")
+    if "Alimentação Fora de Casa" in by_cat.index and "Supermercado" in by_cat.index:
+        if by_cat["Alimentação Fora de Casa"] > by_cat["Supermercado"]:
+            suggestions.append("Alimentação Fora de Casa superou Supermercado. Vale acompanhar essa categoria semanalmente.")
+    if len(df) > 0:
+        top5 = df.sort_values("valor", ascending=False).head(5)["valor"].sum()
+        pct_top5 = (top5 / total) * 100 if total else 0
+        if pct_top5 >= 40:
+            suggestions.append("Seus 5 maiores gastos concentram grande parte do total. Revisar esses lançamentos pode trazer ganho rápido.")
+    if not suggestions:
+        suggestions.append("O mix de categorias está relativamente distribuído. O próximo passo é criar metas por categoria e acompanhar mensalmente.")
+
+    return insights, suggestions
+
+st.title("💸 Vida OS Financeiro MVP v5")
+st.caption("Classifique automaticamente, concilie só os pendentes e leia o resultado em formato de dashboard.")
 
 if "user_rules" not in st.session_state:
     st.session_state.user_rules = pd.DataFrame(columns=["termo","descricao_padrao","categoria","subcategoria","prioridade","ativo"])
@@ -187,7 +267,7 @@ with st.sidebar:
     st.markdown("### Categorias")
     st.write(", ".join([c for c in DEFAULT_CATEGORIES if c != "Excluir do Resumo"]))
 
-tab1, tab2, tab3, tab4 = st.tabs(["1. Importação", "2. Conciliação manual", "3. Dashboard", "4. Regras e exportação"])
+tab1, tab2, tab3, tab4 = st.tabs(["1. Importação", "2. Conciliação manual", "3. Dashboard inteligente", "4. Regras e exportação"])
 
 with tab1:
     uploaded_file = st.file_uploader("Anexe o extrato bancário", type=["csv", "xlsx"], key="statement")
@@ -208,13 +288,13 @@ with tab1:
         c1.metric("Transações", len(tx))
         c2.metric("Automáticas", int((tx["status_classificacao"] == "Automática").sum()))
         c3.metric("Pendentes", int((tx["status_classificacao"].isin(["Pendente", "Pendente de Aprovação"])).sum()))
-        c4.metric("Despesas no dashboard", f"R$ {dashboard_base['valor'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        c4.metric("Despesas no dashboard", currency_br(dashboard_base["valor"].sum()))
 
         st.markdown("### Prévia das transações")
         st.dataframe(
             tx[["data","descricao_original","valor","descricao_padronizada","categoria","subcategoria","status_classificacao"]],
             use_container_width=True,
-            height=360
+            height=340
         )
 
 with tab2:
@@ -273,32 +353,102 @@ with tab3:
         st.info("Processe um extrato para ver o dashboard.")
     else:
         tx = st.session_state.transactions.copy()
-        despesas = tx[~tx["categoria"].isin(["Excluir do Resumo"])].copy()
-        despesas = despesas[despesas["valor"] > 0].copy()
+        base = tx[~tx["categoria"].isin(["Excluir do Resumo"])].copy()
+        base = base[base["valor"] > 0].copy()
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total gasto analisado", f"R$ {despesas['valor'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        col2.metric("Categorias com gasto", despesas["categoria"].replace("", pd.NA).dropna().nunique())
-        col3.metric("Taxa de automação", f"{round((tx['status_classificacao'] == 'Automática').mean() * 100, 1)}%")
+        st.markdown('<div class="section-title">Resumo do período</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Filtros rápidos e leitura visual inspirada em cards e blocos resumidos.</div>', unsafe_allow_html=True)
 
-        st.markdown("### Gastos por categoria")
-        cat_summary = despesas.groupby("categoria", dropna=False)["valor"].sum().reset_index().sort_values("valor", ascending=False)
-        st.bar_chart(cat_summary.set_index("categoria"))
+        f1, f2, f3, f4 = st.columns(4)
+        categorias_opts = sorted([c for c in base["categoria"].fillna("").unique().tolist() if c])
+        subcategorias_opts = sorted([c for c in base["subcategoria"].fillna("").unique().tolist() if c])
+        meses_opts = sorted([m for m in base["mes"].dropna().unique().tolist()])
+        selected_categories = f1.multiselect("Categoria", categorias_opts)
+        selected_subcategories = f2.multiselect("Subcategoria", subcategorias_opts)
+        min_value, max_value = float(base["valor"].min()), float(base["valor"].max())
+        value_range = f3.slider("Faixa de valor", min_value=min_value, max_value=max_value, value=(min_value, max_value))
+        selected_status = f4.multiselect("Status", ["Automática", "Manual", "Pendente", "Pendente de Aprovação"], default=["Automática", "Manual"])
 
-        colA, colB = st.columns([1.1, 0.9])
+        filt = base.copy()
+        if selected_categories:
+            filt = filt[filt["categoria"].isin(selected_categories)]
+        if selected_subcategories:
+            filt = filt[filt["subcategoria"].isin(selected_subcategories)]
+        filt = filt[(filt["valor"] >= value_range[0]) & (filt["valor"] <= value_range[1])]
+        if selected_status:
+            original = tx.copy()
+            ids = original[original["status_classificacao"].isin(selected_status)][["data","descricao_original","valor"]]
+            filt = filt.merge(ids.drop_duplicates(), on=["data","descricao_original","valor"], how="inner")
+
+        total = filt["valor"].sum()
+        transacoes = len(filt)
+        ticket = filt["valor"].mean() if transacoes else 0
+        maior_categoria = filt.groupby("categoria")["valor"].sum().sort_values(ascending=False)
+        maior_categoria_nome = maior_categoria.index[0] if not maior_categoria.empty else "-"
+        maior_categoria_valor = maior_categoria.iloc[0] if not maior_categoria.empty else 0
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Gasto total", currency_br(total))
+        m2.metric("Transações", transacoes)
+        m3.metric("Ticket médio", currency_br(ticket) if transacoes else "R$ 0,00")
+        m4.metric("Maior categoria", f"{maior_categoria_nome}" if maior_categoria_nome != "-" else "-", delta=currency_br(maior_categoria_valor) if maior_categoria_nome != "-" else None)
+
+        colA, colB = st.columns([1.15, 0.85])
+
         with colA:
-            st.markdown("### Maiores gastos")
-            top = despesas.sort_values("valor", ascending=False).head(15)
-            st.dataframe(top[["data","descricao_original","categoria","subcategoria","valor"]], use_container_width=True, height=360)
+            cat_summary = (
+                filt.groupby(["categoria"], dropna=False)["valor"]
+                .sum()
+                .reset_index()
+                .sort_values("valor", ascending=False)
+            )
+            cat_summary["percentual"] = (cat_summary["valor"] / cat_summary["valor"].sum() * 100).round(1) if not cat_summary.empty else []
+            st.markdown("### Participação por categoria")
+            fig_bar = px.bar(cat_summary, x="categoria", y="valor", text="valor")
+            fig_bar.update_traces(texttemplate="R$ %{y:,.2f}", textposition="outside")
+            fig_bar.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="", yaxis_title="")
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+            st.markdown("### Tabela de valor e participação")
+            display_table = cat_summary.rename(columns={"categoria":"Categoria", "valor":"Valor", "percentual":"% do total"})
+            if not display_table.empty:
+                display_table["Valor"] = display_table["Valor"].apply(currency_br)
+            st.dataframe(display_table, use_container_width=True, height=260, hide_index=True)
+
         with colB:
-            st.markdown("### Pendências restantes")
-            pend_rest = tx[tx["status_classificacao"].isin(["Pendente", "Pendente de Aprovação"])][["descricao_original","valor","categoria","subcategoria","status_classificacao"]]
-            st.dataframe(pend_rest, use_container_width=True, height=360)
+            st.markdown("### Distribuição do total")
+            if not cat_summary.empty:
+                fig_pie = px.pie(cat_summary, values="valor", names="categoria", hole=.55)
+                fig_pie.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10))
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            insights, suggestions = build_insights(filt)
+            st.markdown("### Leitura inteligente")
+            for item in insights:
+                st.markdown(f'<div class="insight-box">{item}</div>', unsafe_allow_html=True)
+
+        cL, cR = st.columns([1, 1])
+        with cL:
+            st.markdown("### Top 10 gastos")
+            top10 = filt.sort_values("valor", ascending=False).head(10)[["data","descricao_original","categoria","subcategoria","valor"]].copy()
+            if not top10.empty:
+                top10["valor"] = top10["valor"].apply(currency_br)
+            st.dataframe(top10, use_container_width=True, height=330, hide_index=True)
+        with cR:
+            st.markdown("### Gasto por dia")
+            day_summary = filt.groupby("dia")["valor"].sum().reset_index().sort_values("dia")
+            fig_line = px.line(day_summary, x="dia", y="valor", markers=True)
+            fig_line.update_layout(height=330, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Dia do mês", yaxis_title="")
+            st.plotly_chart(fig_line, use_container_width=True)
+
+        st.markdown("### Sugestões automáticas")
+        for s in suggestions:
+            st.markdown(f'<div class="insight-box">• {s}</div>', unsafe_allow_html=True)
 
 with tab4:
     st.markdown("### Regras em uso")
     st.write(f"Regras padrão: {len(DEFAULT_RULES)} | Regras do usuário: {len(st.session_state.user_rules)} | Total: {len(st.session_state.all_rules)}")
-    st.dataframe(st.session_state.all_rules, use_container_width=True, height=300)
+    st.dataframe(st.session_state.all_rules, use_container_width=True, height=280)
 
     if not st.session_state.transactions.empty:
         export_xlsx = to_excel_bytes({
@@ -309,7 +459,7 @@ with tab4:
         st.download_button(
             "Baixar resultado completo",
             data=export_xlsx,
-            file_name="vida_os_resultado_v4.xlsx",
+            file_name="vida_os_resultado_v5.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -319,9 +469,9 @@ with tab4:
     st.download_button(
         "Baixar regras do usuário",
         data=rules_export,
-        file_name="regras_usuario_v4.xlsx",
+        file_name="regras_usuario_v5.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 st.divider()
-st.caption("V4 focada em fluxo real: importar, classificar, editar pendências e reaproveitar regras nas próximas importações. Próximo passo natural: persistência com banco de dados.")
+st.caption("V5 focada em dashboard: filtros, participação percentual, top gastos, leitura inteligente e sugestões automáticas.")
