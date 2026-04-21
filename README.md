@@ -1,11 +1,11 @@
-# Vida OS Financeiro MVP v2
+# Vida OS Financeiro MVP v3
 
 Melhorias:
-- mais regras prontas
-- seletor de origem da importação (cartão ou conta corrente)
-- aba de pendentes de aprovação
-- links de busca para conferência
-- tratamento melhor para fatura do cartão
+- categoria Seguros
+- regras novas para pets, farmácia, seguro, açaí e lentes
+- merge entre regras padrão e regras do usuário
+- ocultação do pagamento da fatura nos gráficos e somatórios de cartão
+- manutenção das linhas importadas para conferência, sem poluir o resumo
 
 ## Rodar localmente
 pip install -r requirements.txt
