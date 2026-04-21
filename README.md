@@ -1,12 +1,11 @@
-# Vida OS Financeiro MVP v3
+# Vida OS Financeiro MVP v4
 
-Melhorias:
-- categoria Seguros
-- regras novas para pets, farmácia, seguro, açaí e lentes
-- merge entre regras padrão e regras do usuário
-- ocultação do pagamento da fatura nos gráficos e somatórios de cartão
-- manutenção das linhas importadas para conferência, sem poluir o resumo
+Melhorias da v4:
+- restaura a conciliação manual no app
+- mescla regras padrão com regras do usuário
+- exclui pagamento de fatura do dashboard sem apagar da base
+- reforça regras de alimentação, posto, pets, farmácia e seguros
+- exporta transações e regras do usuário
 
-## Rodar localmente
-pip install -r requirements.txt
-streamlit run app.py
+## Deploy
+Use `app.py` como arquivo principal no Streamlit.
